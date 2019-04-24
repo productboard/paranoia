@@ -70,6 +70,7 @@ module Paranoia
           association.decrement_counters
         end
         @_disable_counter_cache = false
+        @_trigger_destroy_callback = true
         result
       end
     end
