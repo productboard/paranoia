@@ -47,7 +47,8 @@ def setup!
     'active_column_model_with_uniqueness_validations' => 'name VARCHAR(32), deleted_at DATETIME, active BOOLEAN',
     'paranoid_model_with_belongs_to_active_column_model_with_has_many_relationships' => 'name VARCHAR(32), deleted_at DATETIME, active BOOLEAN, active_column_model_with_has_many_relationship_id INTEGER',
     'active_column_model_with_has_many_relationships' => 'name VARCHAR(32), deleted_at DATETIME, active BOOLEAN', 
-    'without_default_scope_models' => 'deleted_at DATETIME'
+    'without_default_scope_models' => 'deleted_at DATETIME',
+    'callback_models_child' => 'deleted_at DATETIME, after_commit_destroy_model_id INTEGER NOT NULL'
   }.each do |table_name, columns_as_sql_string|
     ActiveRecord::Base.connection.execute "CREATE TABLE #{table_name} (id INTEGER NOT NULL PRIMARY KEY, #{columns_as_sql_string})"
   end
@@ -114,6 +115,46 @@ class ParanoiaTest < test_framework
     assert_equal 0, model.class.count
     assert_equal 0, model.class.unscoped.count
   end
+
+  def test_after_commit_on_destroy_callbacks
+    model = AfterCommitDestroyModel.new
+    model.save
+    model.reset_after_commit_callback_called     # clear called callback flags
+    assert_equal false, model.after_commit_callback_called
+    model.destroy
+
+    assert model.after_commit_callback_called
+  end
+
+
+  def test_after_commit_on_destroy_callback_association
+    parent = AfterCommitDestroyModel.create
+    related_model_1 = parent.after_commit_destroy_model_child.create
+    related_model_2 = parent.after_commit_destroy_model_child.create
+
+    parent.save
+    related_model_1.save
+    related_model_2.save
+
+
+    parent.reset_after_commit_callback_called     # clear called callback flags
+    related_model_1.reset_after_commit_callback_called     # clear called callback flags
+    related_model_2.reset_after_commit_callback_called     # clear called callback flags
+
+    assert_equal false, parent.after_commit_callback_called
+    assert_equal false, related_model_1.after_commit_callback_called
+    assert_equal false, related_model_2.after_commit_callback_called
+
+    parent.destroy
+
+    assert_equal true, parent.after_commit_callback_called
+    assert_equal true, related_model_1.after_commit_callback_called
+    assert_equal true, related_model_2.after_commit_callback_called
+
+    #assert_equal 0, parent_model_with_counter_cache_column.reload.related_models_count
+
+  end
+
 
   # Anti-regression test for #81, which would've introduced a bug to break this test.
   def test_destroy_behavior_for_plain_models_callbacks
@@ -1371,3 +1412,47 @@ module Namespaced
     belongs_to :paranoid_has_one
   end
 end
+
+class AfterCommitDestroyModel < ActiveRecord::Base
+  self.table_name = "callback_models"
+
+  attr_reader :after_commit_callback_called
+
+  acts_as_paranoid
+  after_commit :callback_triggered, on: :destroy
+
+  has_many :after_commit_destroy_model_child, dependent: :destroy
+
+  def reset_after_commit_callback_called
+    @after_commit_callback_called = false
+  end
+
+  private
+
+  def callback_triggered
+    @after_commit_callback_called = true
+  end
+end
+
+
+class AfterCommitDestroyModelChild < ActiveRecord::Base
+  self.table_name = 'callback_models_child'
+  attr_reader :after_commit_callback_called
+
+  acts_as_paranoid
+  belongs_to :after_commit_destroy_model
+
+  after_commit :callback_triggered, on: :destroy
+
+  def reset_after_commit_callback_called
+    @after_commit_callback_called = false
+  end
+
+  private
+
+  def callback_triggered
+    @after_commit_callback_called = true
+  end
+
+end
+
